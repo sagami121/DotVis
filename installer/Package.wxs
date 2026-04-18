@@ -1,0 +1,80 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui"
+     xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util">
+  <Package Name="DotVis" 
+           Manufacturer="3aGaM1" 
+           Version="$(var.AppVersion)" 
+           UpgradeCode="d303e073-723d-417f-98f4-12ee71dc9b18">
+    
+    <MajorUpgrade DowngradeErrorMessage="新しいバージョンの [ProductName] が既にインストールされています。" />
+
+    <!-- アーカイブ設定 -->
+    <MediaTemplate EmbedCab="yes" />
+
+    <!-- UI設定: インストール先の選択ダイアログを表示 -->
+    <UI>
+      <ui:WixUI Id="WixUI_InstallDir" InstallDirectory="INSTALLFOLDER" />
+
+      <Publish Dialog="ExitDialog" 
+               Control="Finish" 
+               Event="DoAction" 
+               Value="LaunchApplication" 
+               Condition="WIXUI_EXITDIALOGOPTIONALCHECKBOX = 1 and NOT Installed" />
+    </UI>
+
+    <WixVariable Id="WixUILicenseRtf" Value="License.rtf" />
+    <Icon Id="icon.ico" SourceFile="..\assets\icon.ico"/>
+    <Property Id="ARPPRODUCTICON" Value="icon.ico" />
+
+    <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOXTEXT" Value="DotVis を起動する" />
+    <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOX" Value="1" />
+
+    <CustomAction Id="LaunchApplication" 
+                  FileRef="MainEXE" 
+                  ExeCommand="" 
+                  Execute="immediate" 
+                  Return="asyncNoWait" />
+
+    <!-- ディレクトリ構造の定義 -->
+    <StandardDirectory Id="ProgramFilesFolder">
+      <Directory Id="INSTALLFOLDER" Name="DotVis" />
+    </StandardDirectory>
+
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Directory Id="ApplicationProgramsFolder" Name="DotVis" />
+    </StandardDirectory>
+
+    <StandardDirectory Id="DesktopFolder" />
+
+    <!-- コンポーネント定義 -->
+    <ComponentGroup Id="MainComponents" Directory="INSTALLFOLDER">
+      <!-- Nuitkaでビルドしたファイルを再帰的に含める -->
+      <Files Include="$(var.PayloadDir)\**" />
+      
+      <!-- メイン実行ファイルとショートカットの設定 -->
+      <Component Id="MainExecutable" Guid="*">
+        <File Id="MainEXE" Source="..\dist\main.dist\DotVis.exe" KeyPath="yes">
+          <Shortcut Id="StartMenuShortcut" 
+                    Directory="ApplicationProgramsFolder" 
+                    Name="DotVis" 
+                    WorkingDirectory="INSTALLFOLDER" 
+                    Advertise="yes"
+                    Icon="icon.ico" />
+          <Shortcut Id="DesktopShortcut" 
+                    Directory="DesktopFolder" 
+                    Name="DotVis" 
+                    WorkingDirectory="INSTALLFOLDER" 
+                    Advertise="yes"
+                    Icon="icon.ico" />
+        </File>
+        <RemoveFolder Id="CleanupShortcut" Directory="ApplicationProgramsFolder" On="uninstall" />
+      </Component>
+    </ComponentGroup>
+
+    <!-- フィーチャー定義 -->
+    <Feature Id="MainFeature" Title="DotVis" Level="1">
+      <ComponentGroupRef Id="MainComponents" />
+    </Feature>
+  </Package>
+</Wix>
