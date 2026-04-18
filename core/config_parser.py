@@ -5,6 +5,7 @@ import yaml
 import toml
 import configparser
 import shutil
+import io
 
 class ConfigParseError(Exception):
     """Custom exception for configuration parsing errors with line/column info."""
@@ -26,7 +27,12 @@ def read_config(path: str) -> dict:
             parser = configparser.ConfigParser()
             parser.optionxform = str
             parser.read(path, encoding='utf-8')
-            return {section: dict(parser.items(section)) for section in parser.sections()}
+            res = {}
+            if parser.defaults():
+                res['DEFAULT'] = dict(parser.defaults())
+            for section in parser.sections():
+                res[section] = dict(parser.items(section))
+            return res
         elif ext == '.toml':
             with open(path, 'r', encoding='utf-8') as f:
                 return toml.load(f)
@@ -35,13 +41,14 @@ def read_config(path: str) -> dict:
     except json.JSONDecodeError as e:
         raise ConfigParseError(f"JSON解釈エラー: {e.msg}", e.lineno, e.colno)
     except toml.TomlDecodeError as e:
-        # toml module error might vary, generic fallback
         raise ConfigParseError(f"TOML解釈エラー: {str(e)}")
     except yaml.YAMLError as e:
         if hasattr(e, 'problem_mark'):
             mark = e.problem_mark
             raise ConfigParseError(f"YAML解釈エラー: {e.problem}", mark.line + 1, mark.column + 1)
         raise ConfigParseError(f"YAML解釈エラー: {str(e)}")
+    except configparser.Error as e:
+        raise ConfigParseError(f"INI形式エラー: {str(e)}")
     except Exception as e:
         raise Exception(f"ファイルの読み込みに失敗しました ({path}):\n{e}")
 
@@ -78,14 +85,15 @@ def save_config(path: str, data: dict):
         elif ext in ['.ini', '.cfg', '.conf']:
             parser = configparser.ConfigParser()
             parser.optionxform = str
-            for section, keys in data.items():
-                if isinstance(keys, dict):
-                    parser[section] = {}
-                    for k, v in keys.items():
-                        parser[section][k] = str(v)
+            for section, items in data.items():
+                if isinstance(items, dict):
+                    if section == 'DEFAULT':
+                        for k, v in items.items():
+                            parser.set(configparser.DEFAULTSECT, k, str(v))
+                    else:
+                        parser[section] = {k: str(v) for k, v in items.items()}
                 else:
-                    if 'DEFAULT' not in parser: parser['DEFAULT'] = {}
-                    parser['DEFAULT'][str(section)] = str(keys)
+                    parser.set(configparser.DEFAULTSECT, str(section), str(items))
             with open(path, 'w', encoding='utf-8') as f:
                 parser.write(f)
         elif ext == '.toml':
