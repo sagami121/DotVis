@@ -60,3 +60,11 @@ ENV/
 *.swo
 *.bak
 *.orig
+
+# Installer
+installer/payload*/
+installer/FilesFragment.wxs
+*.msi
+*.wixobj
+*.wixpdb
+.wix/
