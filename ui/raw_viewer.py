@@ -15,6 +15,12 @@ class RawHighlighter(QSyntaxHighlighter):
         self._rules.append((QRegularExpression(r'"[^"]*"(?=\s*:)'), key_format)) # JSON keys
         self._rules.append((QRegularExpression(r'^[\w\d_-]+(?=\s*=)'), key_format)) # TOML/INI keys
 
+        # Section format (INI headers, etc.)
+        section_format = QTextCharFormat()
+        section_format.setForeground(QColor("#d19a66"))
+        section_format.setFontWeight(QFont.Bold)
+        self._rules.append((QRegularExpression(r'^\[.*\]'), section_format))
+
         # String format (Yellow-ish)
         string_format = QTextCharFormat()
         string_format.setForeground(QColor("#ce9178"))

@@ -3,10 +3,13 @@ import json
 import yaml
 import toml
 import os
+import configparser
+import io
+import jsonschema
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QTreeWidget, QTreeWidgetItem, 
     QLineEdit, QCheckBox, QPushButton, QLabel, QMessageBox, QMenu, QInputDialog,
-    QStackedWidget, QFrame, QToolButton, QTabBar, QHeaderView, QStyle
+    QStackedWidget, QFrame, QToolButton, QTabBar, QHeaderView, QStyle, QFileDialog
 )
 from PySide6.QtCore import Qt, Signal, QTimer
 from PySide6.QtGui import QFont, QColor
@@ -16,12 +19,15 @@ class ConfigEditor(QWidget):
     """Main configuration editor widget with Tree and Raw views."""
     request_new_file = Signal()
     request_open_file = Signal()
+    request_load_file = Signal(str)
     data_changed = Signal(str, object)
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.current_path = None
         self.config_data = None
+        self.schema_data = None
+        self.schema_path = None
         self._is_modified = False
         self._is_syncing = False
 
@@ -141,6 +147,41 @@ class ConfigEditor(QWidget):
         title_font.setBold(True)
         self.title_label.setFont(title_font)
         
+        self.schema_btn = QPushButton("スキーマ")
+        self.schema_btn.setFixedWidth(80)
+        self.schema_btn.setToolTip("バリデーション用スキーマを選択")
+        self.schema_btn.clicked.connect(self._select_schema)
+        self.schema_btn.setStyleSheet("""
+            QPushButton { 
+                background-color: #333; 
+                color: #ccc; 
+                border: 1px solid #444; 
+                border-radius: 4px; 
+                padding: 6px; 
+            } 
+            QPushButton:hover { 
+                background-color: #444; 
+                color: #fff;
+            } 
+        """)
+
+        self.convert_btn = QPushButton("変換")
+        self.convert_btn.setFixedWidth(80)
+        self.convert_btn.clicked.connect(self._show_convert_menu)
+        self.convert_btn.setStyleSheet("""
+            QPushButton { 
+                background-color: #333; 
+                color: #ccc; 
+                border: 1px solid #444; 
+                border-radius: 4px; 
+                padding: 6px; 
+            } 
+            QPushButton:hover { 
+                background-color: #444; 
+                color: #fff;
+            } 
+        """)
+        
         self.save_btn = QPushButton("保存")
         self.save_btn.clicked.connect(self.save)
         self.save_btn.setEnabled(False)
@@ -171,6 +212,8 @@ class ConfigEditor(QWidget):
         
         header_layout.addWidget(self.title_label)
         header_layout.addStretch()
+        header_layout.addWidget(self.schema_btn)
+        header_layout.addWidget(self.convert_btn)
         header_layout.addWidget(self.save_btn)
         self.editor_layout.addWidget(self.header_frame)
 
@@ -194,8 +237,20 @@ class ConfigEditor(QWidget):
         self.breadcrumb_label = QLabel("ルート")
         self.breadcrumb_label.setStyleSheet("color: #666; font-size: 11px; margin-left:10px;")
         sub_layout.addWidget(self.breadcrumb_label)
+        
         sub_layout.addStretch()
         
+        # 環境変数プレビュー
+        self.env_preview_cb = QCheckBox("環境変数プレビュー")
+        self.env_preview_cb.setStyleSheet("color: #888; font-size: 11px; margin-right: 10px;")
+        self.env_preview_cb.stateChanged.connect(self.populate_tree)
+        sub_layout.addWidget(self.env_preview_cb)
+
+        # バリデーションステータス
+        self.validation_status = QLabel("")
+        self.validation_status.setStyleSheet("font-size: 11px; font-weight: bold; margin-right: 10px;")
+        sub_layout.addWidget(self.validation_status)
+
         # 検索バー
         self.search_box = QLineEdit()
         self.search_box.setPlaceholderText("キーを検索...")
@@ -259,6 +314,21 @@ class ConfigEditor(QWidget):
                 text = yaml.dump(self.config_data, allow_unicode=True, sort_keys=False)
             elif ext == '.toml':
                 text = toml.dumps(self.config_data)
+            elif ext in ['.ini', '.cfg', '.conf']:
+                parser = configparser.ConfigParser()
+                parser.optionxform = str
+                for section, items in self.config_data.items():
+                    if isinstance(items, dict):
+                        if section == 'DEFAULT':
+                            for k, v in items.items():
+                                parser.set(configparser.DEFAULTSECT, k, str(v))
+                        else:
+                            parser[section] = {k: str(v) for k, v in items.items()}
+                    else:
+                        parser.set(configparser.DEFAULTSECT, str(section), str(items))
+                with io.StringIO() as f:
+                    parser.write(f)
+                    text = f.getvalue()
             else:
                 text = str(self.config_data)
             self.raw_viewer.setPlainText(text)
@@ -283,6 +353,15 @@ class ConfigEditor(QWidget):
                 new_data = yaml.safe_load(text)
             elif ext == '.toml':
                 new_data = toml.loads(text)
+            elif ext in ['.ini', '.cfg', '.conf']:
+                parser = configparser.ConfigParser()
+                parser.optionxform = str
+                parser.read_string(text)
+                new_data = {}
+                if parser.defaults():
+                    new_data['DEFAULT'] = dict(parser.defaults())
+                for section in parser.sections():
+                    new_data[section] = dict(parser.items(section))
             else:
                 return
             
@@ -344,6 +423,7 @@ class ConfigEditor(QWidget):
             self.tree.expandToDepth(0)
         self.tree.blockSignals(False)
         self._on_search() 
+        self.validate_data()
         
     def _build_tree(self, data, parent_item, path_keys=None):
         if path_keys is None: path_keys = []
@@ -378,7 +458,11 @@ class ConfigEditor(QWidget):
                 item.setCheckState(1, Qt.Checked if value else Qt.Unchecked)
                 item.setData(1, Qt.UserRole + 1, 'bool')
             else:
-                item.setText(1, str(value) if value is not None else "")
+                display_val = value
+                if self.env_preview_cb.isChecked() and isinstance(value, str):
+                    display_val = os.path.expandvars(value)
+                
+                item.setText(1, str(display_val) if display_val is not None else "")
                 item.setForeground(1, QColor("#4facfe")) 
                 t = 'int' if isinstance(value, int) else 'float' if isinstance(value, float) else 'str'
                 item.setData(1, Qt.UserRole + 1, t)
@@ -533,3 +617,72 @@ class ConfigEditor(QWidget):
             QTimer.singleShot(2000, lambda: self.save_btn.setText("保存"))
         except Exception as e:
             QMessageBox.critical(self, "エラー", f"保存エラー:\n{e}")
+
+    def _show_convert_menu(self):
+        if self.config_data is None: return
+        
+        menu = QMenu(self)
+        formats = [".json", ".toml", ".yaml", ".ini"]
+        current_ext = os.path.splitext(self.current_path)[1].lower() if self.current_path else ""
+        
+        for f in formats:
+            if f != current_ext:
+                fmt_name = f.upper().replace(".", "")
+                action = menu.addAction(fmt_name)
+                # target=f を引数に渡すことでループ内の変数をキャプチャ
+                action.triggered.connect(lambda checked=False, target=f: self._export_to_format(target))
+        
+        menu.exec(self.convert_btn.mapToGlobal(self.convert_btn.rect().bottomLeft()))
+
+    def _export_to_format(self, ext):
+        if not self.current_path: return
+        
+        base = os.path.splitext(self.current_path)[0]
+        new_path = base + ext
+        
+        # 既に存在する場合は確認
+        if os.path.exists(new_path):
+            reply = QMessageBox.question(self, "確認", f"'{os.path.basename(new_path)}' は既に存在します。上書きしますか？", QMessageBox.Yes | QMessageBox.No)
+            if reply == QMessageBox.No: return
+            
+        try:
+            save_config(new_path, self.config_data)
+            # MainWindowに新しいファイルを開くよう通知
+            self.request_load_file.emit(new_path)
+        except Exception as e:
+            QMessageBox.critical(self, "エラー", f"変換エラー:\n{e}")
+
+    def _select_schema(self):
+        path, _ = QFileDialog.getOpenFileName(self, "スキーマファイルを選択", "", "JSON Schema (*.json);;All Files (*)")
+        if not path: return
+        
+        try:
+            with open(path, 'r', encoding='utf-8') as f:
+                self.schema_data = json.load(f)
+            self.schema_path = path
+            self.schema_btn.setText(f"ス: {os.path.basename(path)}")
+            self.validate_data()
+        except Exception as e:
+            QMessageBox.critical(self, "スキーマエラー", f"スキーマの読み込みに失敗しました:\n{e}")
+
+    def validate_data(self):
+        if self.config_data is None or self.schema_data is None:
+            self.validation_status.setText("")
+            return
+            
+        try:
+            jsonschema.validate(instance=self.config_data, schema=self.schema_data)
+            self.validation_status.setText("✓ Valid")
+            self.validation_status.setStyleSheet("color: #4caf50; font-weight: bold;")
+            self.validation_status.setToolTip("バリデーションに成功しました")
+        except jsonschema.exceptions.ValidationError as e:
+            msg = e.message
+            # 短縮して表示
+            display_msg = msg if len(msg) < 15 else msg[:15] + "..."
+            self.validation_status.setText(f"✗ {display_msg}")
+            self.validation_status.setToolTip(msg)
+            self.validation_status.setStyleSheet("color: #f44336; font-weight: bold;")
+        except Exception as e:
+            self.validation_status.setText("! Error")
+            self.validation_status.setToolTip(str(e))
+            self.validation_status.setStyleSheet("color: #ffa000; font-weight: bold;")
