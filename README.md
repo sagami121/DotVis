@@ -28,8 +28,9 @@
 - Python 3.13   
 
 ## ビルド方法
-```bash
-python -m nuitka --standalone --windows-icon="assets/icon.ico" --output-dir="dist" main.py
+`build.bat` を実行してください。Nuitkaを使用してスタンドアロンの実行ファイルを作成します。
+```batch
+.\build.bat
 ```
 
 ## 実行方法
