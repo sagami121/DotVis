@@ -14,7 +14,7 @@
 
 ---
 
-# 対応している拡張子
+## 対応している拡張子
 - .json
 - .toml
 - .yaml
@@ -23,19 +23,19 @@
 - .cfg
 - .conf
 
-# 動作環境
+## 動作環境
 - Windows 11 64bit
 - Python 3.13   
 
-# ビルド方法
+## ビルド方法
 ```bash
 python -m nuitka --standalone --windows-icon="assets/icon.ico" --output-dir="dist" main.py
 ```
 
-# 実行方法
+## 実行方法
 ```bash
 python main.py
 ```
 
-# ライセンス
+## ライセンス
 このソフトウェアはMITライセンスの下で公開されています。
